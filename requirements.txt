@@ -1,0 +1,30 @@
+# Core LangChain & RAG
+langchain>=0.2.0
+langchain-community>=0.2.0
+langchain-core>=0.2.0
+langchain-openai>=0.1.0
+langchain-google-genai>=2.0.0
+google-generativeai>=0.8.0
+langchain-chroma>=0.1.0
+chromadb>=0.5.0
+pypdf>=4.0.0
+python-docx>=1.1.0
+tiktoken>=0.7.0
+
+# Environment & Config
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# Audio & Speech-to-Text (STT)
+pyaudio>=0.2.14
+sounddevice>=0.4.6
+numpy>=1.24.0
+faster-whisper>=1.0.0
+
+# Text-to-Speech (TTS) & Playback
+edge-tts>=6.1.12
+pygame>=2.5.0
+
+# Optional Web search & utilities
+requests>=2.31.0

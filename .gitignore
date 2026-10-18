@@ -1,0 +1,57 @@
+# ========================================================
+# CẤU HÌNH BẢO MẬT & MÔI TRƯỜNG (.gitignore cho PROTOTYPE)
+# ========================================================
+
+# 1. TỆP BẢO MẬT & API KEYS (Tuyệt đối không đẩy lên mạng)
+.env
+.env.*
+!.env.example
+*.env
+*.pem
+*.key
+*.cert
+
+# 2. MÔI TRƯỜNG ẢO PYTHON (Rất nặng, hàng GB)
+.venv/
+venv/
+ENV/
+env/
+airobot_env/
+build/
+dist/
+*.egg-info/
+
+# 3. TỆP CACHE & BIÊN DỊCH
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 4. CƠ SỞ DỮ LIỆU VECTOR & CHROMA (Tự sinh khi chạy ingest.py)
+vector_db/
+*.chroma/
+*.sqlite3
+*.parquet
+
+# 5. TỆP ÂM THANH TẠM & GHI ÂM (Microphone / TTS tạm)
+data/last_recording.wav
+data/last_tts_response.mp3
+data/*.wav
+*.wav
+
+# 6. LOGS & TỆP TẠM HỆ THỐNG
+*.log
+*.tmp
+*.bak
+*.swp
+*~
+
+# 7. TRÌNH SOẠN THẢO (IDE) & HỆ ĐIỀU HÀNH
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
