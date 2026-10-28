@@ -40,7 +40,9 @@ vector_db/
 data/last_recording.wav
 data/last_tts_response.mp3
 data/*.wav
+data/*.mp3
 *.wav
+*.mp3
 
 # 6. LOGS & TỆP TẠM HỆ THỐNG
 *.log
@@ -55,3 +57,15 @@ data/*.wav
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# 8. MÔ HÌNH VẬT LÝ & TRỌNG SỐ DEEP LEARNING (Rất nặng >50MB, tự tải khi chạy)
+*.pt
+*.pth
+*.onnx
+*.engine
+*.tflite
+*.bin
+
+# 9. TÀI LIỆU TRÌNH CHIẾU BINARY NẶNG (Lưu cục bộ)
+*.pptx
+*.ppt

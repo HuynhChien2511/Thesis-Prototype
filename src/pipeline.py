@@ -29,14 +29,25 @@ import numpy as np
 from src.audio.recorder import AudioRecorder
 from src.audio.stt import SpeechToText
 from src.rag.retriever import AdministrativeRAG
+from src.rag.guardrail import GuardrailManager
 from src.audio.tts import TextToSpeech
+from src.vision.camera import VideoCaptureThread
+from src.vision.detector import ObjectDetector, DetectionResult
+from src.vision.visual_context import VisionContextManager
 from src.config import (
     LLM_PROVIDER,
     GEMINI_MODEL,
     WHISPER_MODEL,
     WHISPER_DEVICE,
     TTS_VOICE,
-    SIMILARITY_THRESHOLD
+    SIMILARITY_THRESHOLD,
+    VISION_ENABLED,
+    CAMERA_INDEX,
+    CAMERA_WIDTH,
+    CAMERA_HEIGHT,
+    YOLO_MODEL_PATH,
+    YOLO_DEVICE,
+    YOLO_IMGSZ
 )
 
 # Danh sách từ khóa người dùng muốn kết thúc phiên làm việc
@@ -51,39 +62,121 @@ class VoiceAgentPipeline:
     def __init__(
         self,
         record_mode: str = "ptt",
-        tts_enabled: bool = True
+        tts_enabled: bool = True,
+        vision_enabled: Optional[bool] = None
     ):
         """
-        Khởi tạo Pipeline tích hợp toàn trình:
-        - record_mode: "ptt" (Push-to-Talk mặc định) hoặc "vad" (Voice Activity Detection)
+        Khởi tạo Pipeline tích hợp toàn trình (Sprint 4 & 5):
+        - record_mode: "ptt" (Push-to-Talk) hoặc "vad" (Voice Activity Detection)
         - tts_enabled: Bật/tắt phát âm thanh ra loa
+        - vision_enabled: Bật/tắt module thị giác thời gian thực (Camera + YOLOv8)
         """
         print("=" * 70)
-        print(" KHỞI ĐỘNG HỆ THỐNG TRỢ LÝ ROBOT HÀNH CHÍNH CÔNG (SPRINT 4) ")
+        print(" KHỞI ĐỘNG HỆ THỐNG TRỢ LÝ ROBOT HÀNH CHÍNH CÔNG (STAGE 5 INTEGRATION) ")
         print("=" * 70)
         
         self.record_mode = record_mode.lower()
         self.tts_enabled = tts_enabled
+        self.vision_enabled = VISION_ENABLED if vision_enabled is None else vision_enabled
+        self._is_busy = False
         
         # 1. Khởi tạo Đôi tai (Mic Recorder)
-        print("[1/4] 🎤 Đang kết nối thiết bị thu âm Microphone...")
+        print("[1/5] 🎤 Đang kết nối thiết bị thu âm Microphone...")
         self.recorder = AudioRecorder()
         
         # 2. Khởi tạo Bộ nhận diện giọng nói (STT - Faster-Whisper)
-        print(f"[2/4] 🎧 Đang nạp mô hình nhận diện giọng nói ({WHISPER_MODEL.upper()} trên {WHISPER_DEVICE.upper()})...")
+        print(f"[2/5] 🎧 Đang nạp mô hình nhận diện giọng nói ({WHISPER_MODEL.upper()} trên {WHISPER_DEVICE.upper()})...")
         self.stt = SpeechToText()
         
-        # 3. Khởi tạo Não bộ pháp lý (RAG - Vector DB + LLM)
-        print(f"[3/4] 🧠 Đang kích hoạt Não bộ tri thức (Gemini & ChromaDB, Threshold={SIMILARITY_THRESHOLD})...")
+        # 3. Khởi tạo Não bộ pháp lý (RAG - Vector DB + LLM & Guardrail)
+        print(f"[3/5] 🧠 Đang kích hoạt Não bộ tri thức (Gemini & ChromaDB, Threshold={SIMILARITY_THRESHOLD})...")
         self.rag = AdministrativeRAG(similarity_threshold=SIMILARITY_THRESHOLD)
+        self.guardrail = GuardrailManager()
         
         # 4. Khởi tạo Khuôn miệng phát âm (TTS - Edge-TTS)
-        print(f"[4/4] 🗣️  Đang thiết lập giọng đọc phát âm ({TTS_VOICE})...")
+        print(f"[4/5] 🗣️  Đang thiết lập giọng đọc phát âm ({TTS_VOICE})...")
         self.tts = TextToSpeech(voice=TTS_VOICE)
         
+        # 5. Khởi tạo Mắt thần thị giác (Camera + YOLOv8 + Multimodal VQA)
+        self.camera: Optional[VideoCaptureThread] = None
+        self.detector: Optional[ObjectDetector] = None
+        self.vision_mgr: Optional[VisionContextManager] = None
+        
+        if self.vision_enabled:
+            print(f"[5/5] 👁️  Đang kích hoạt Mắt thần thị giác (Camera #{CAMERA_INDEX} & YOLOv8n)...")
+            self.camera = VideoCaptureThread(
+                source=CAMERA_INDEX,
+                width=CAMERA_WIDTH,
+                height=CAMERA_HEIGHT
+            )
+            self.detector = ObjectDetector(
+                model_path=YOLO_MODEL_PATH,
+                device=YOLO_DEVICE,
+                imgsz=YOLO_IMGSZ
+            )
+            self.vision_mgr = VisionContextManager(
+                camera=self.camera,
+                detector=self.detector,
+                on_person_detected=self._on_person_detected_callback
+            )
+            self.vision_mgr.start_monitoring()
+        else:
+            print("[5/5] 👁️  Module thị giác: [TẮT]")
+        
         print("=" * 70)
-        print("[SUCCESS] Toàn bộ hệ thống Pipeline đã sẵn sàng phục vụ Quý công dân!")
+        print("[SUCCESS] Toàn bộ hệ thống Pipeline Đa phương thức đã sẵn sàng phục vụ!")
         print("=" * 70)
+
+    def pause_proactive_greeting(self):
+        """Tạm dừng cơ chế chào hỏi chủ động khi người dùng đang trong phiên đàm thoại."""
+        if self.vision_mgr:
+            self.vision_mgr.pause_greeting()
+
+    def resume_proactive_greeting(self):
+        """Bật lại cơ chế chào hỏi chủ động khi kết thúc phiên và quay về chế độ chờ."""
+        if self.vision_mgr:
+            self.vision_mgr.resume_greeting()
+
+    def _on_person_detected_callback(self, detection: DetectionResult, is_group: bool = False):
+        """Callback kích hoạt khi camera phát hiện người/nhóm người mới đến gần robot."""
+        if self._is_busy:
+            return
+        self.handle_proactive_greeting(detection, speak=self.tts_enabled, play_audio=True, is_group=is_group)
+
+    def handle_proactive_greeting(
+        self,
+        detection: DetectionResult,
+        speak: bool = True,
+        play_audio: bool = True,
+        is_group: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Xử lý sự kiện Chủ động Chào hỏi (Proactive Greeting) khi có người hoặc nhóm đứng trước mặt robot.
+        Tự động phân biệt lời chào số ít (Quý khách) và số nhiều (Quý khách và mọi người).
+        """
+        if is_group or detection.person_count > 1:
+            greeting = "Kính chào Quý khách và mọi người! Tôi là robot trợ lý hành chính công. Tôi có thể hỗ trợ mọi người giải quyết thủ tục gì hôm nay ạ?"
+        else:
+            greeting = "Kính chào Quý khách! Tôi là robot trợ lý hành chính công. Tôi có thể hỗ trợ Quý khách giải quyết thủ tục gì hôm nay ạ?"
+            
+        print(f"\n[🔔 CHỦ ĐỘNG CHÀO ĐÓN]: {greeting}")
+        
+        tts_latency = 0.0
+        if speak and self.tts_enabled:
+            self._is_busy = True
+            try:
+                synth_res = self.tts.synthesize(greeting)
+                tts_latency = synth_res["latency_sec"]
+                if play_audio and synth_res["audio_path"] and synth_res["audio_path"].exists():
+                    self.tts.play(synth_res["audio_path"], block=True)
+            finally:
+                self._is_busy = False
+                
+        return {
+            "greeting_text": greeting,
+            "detection": detection,
+            "tts_latency": tts_latency
+        }
 
     def is_exit_command(self, text: str) -> bool:
         """Kiểm tra xem câu nói của người dùng có chứa từ khóa chào tạm biệt / kết thúc không."""
@@ -98,62 +191,104 @@ class VoiceAgentPipeline:
     def process_text(self, question: str, speak: bool = True, play_audio: bool = True) -> Dict[str, Any]:
         """
         Xử lý truy vấn từ chuỗi văn bản (dùng cho chế độ Text mode hoặc bước sau STT):
-        1. Gửi vào Não bộ RAG (tìm kiếm văn bản + sinh lời đáp)
-        2. Tổng hợp file âm thanh TTS
-        3. Phát âm thanh ra loa ngoài (nếu play_audio=True) và đo lường chi tiết
+        1. Phân loại yêu cầu: Thị giác đa phương thức (VQA) hay Tra cứu pháp lý (RAG).
+        2. Tổng hợp file âm thanh TTS.
+        3. Phát âm thanh ra loa ngoài (nếu play_audio=True) và đo lường chi tiết.
         """
+        self._is_busy = True
         start_time = time.time()
-        
-        # 1. Truy vấn RAG
-        print(f"\n[🧠 NÃO BỘ ĐANG XỬ LÝ] Tìm kiếm văn bản quy định & tổng hợp câu trả lời...")
-        rag_res = self.rag.query(question)
-        rag_latency = rag_res["latency"]["total_sec"]
-        
-        answer = rag_res["answer"]
-        sources = rag_res["sources"]
-        found_in_docs = rag_res["found_in_docs"]
-        
-        print(f"\n[🤖 TRỢ LÝ PHẢN HỒI]:\n{answer}")
-        if sources:
-            print(f"\n[📚 NGUỒN CĂN CỨ]: {', '.join(sources)}")
-        else:
-            print(f"\n[ℹ️ PHẠM VI DỮ LIỆU]: Câu hỏi nằm ngoài cơ sở dữ liệu nội bộ.")
+        try:
+            # 0. Đưa qua Hàng rào An toàn & Lọc Ý định (Guardrail: Noise, Profanity, Chit-chat, Out-of-Scope)
+            guard_res = self.guardrail.evaluate(question)
+            if guard_res["handled"]:
+                is_visual = False
+                rag_latency = round(guard_res["latency_ms"] / 1000.0, 4)
+                answer = guard_res["answer"]
+                sources = []
+                found_in_docs = False
+                source_type = f"guardrail_{guard_res['action']}"
+                warning_issued = False
+                print(f"\n[🛡️ HÀNG RÀO BẢO VỆ ({guard_res['action'].upper()})]: {guard_res['reason']}")
+                print(f"\n[🤖 TRỢ LÝ PHẢN HỒI]:\n{answer}")
+            else:
+                # Kiểm tra xem câu hỏi có yêu cầu quan sát thị giác thực tế hay không
+                is_visual = (
+                    self.vision_enabled
+                    and self.vision_mgr is not None
+                    and self.vision_mgr.is_visual_query(question)
+                )
 
-        # 2. Tổng hợp giọng nói TTS
-        tts_synth_latency = 0.0
-        tts_playback_duration = 0.0
-        
-        if speak and self.tts_enabled and answer:
-            print(f"\n[🗣️ ĐANG TỔNG HỢP GIỌNG ĐỌC] ({self.tts.voice})...")
-            synth_res = self.tts.synthesize(answer)
-            tts_synth_latency = synth_res["latency_sec"]
-            response_time = round(time.time() - start_time, 2)
+                if is_visual:
+                    print(f"\n[👁️ THỊ GIÁC ĐA PHƯƠNG THỨC] Phát hiện câu hỏi quan sát cảnh vật/giấy tờ. Chụp ảnh từ Camera...")
+                    vis_res = self.vision_mgr.ask_multimodal_vision(question)
+                    rag_latency = vis_res["latency_sec"]
+                    answer = vis_res["answer"]
+                    sources = ["Camera Trực tiếp (Gemini Multimodal Vision)"]
+                    found_in_docs = False
+                    source_type = "vision"
+                    warning_issued = False
+                    print(f"\n[🤖 TRỢ LÝ PHẢN HỒI THỊ GIÁC]:\n{answer}")
+                else:
+                    # 1. Truy vấn RAG thông thường (ChromaDB + Gemini Text + Web Fallback)
+                    print(f"\n[🧠 NÃO BỘ ĐANG XỬ LÝ] Tìm kiếm văn bản quy định & tổng hợp câu trả lời...")
+                    rag_res = self.rag.query(question)
+                    rag_latency = rag_res["latency"]["total_sec"]
+                    
+                    answer = rag_res["answer"]
+                    sources = rag_res["sources"]
+                    found_in_docs = rag_res["found_in_docs"]
+                    source_type = rag_res.get("source_type", "local")
+                    warning_issued = rag_res.get("warning_issued", False)
+                    
+                    print(f"\n[🤖 TRỢ LÝ PHẢN HỒI]:\n{answer}")
+                    if source_type == "web":
+                        print(f"\n[🌐 PHẠM VI DỮ LIỆU]: Tra cứu Internet (Web Search Fallback có cảnh báo).")
+                    elif sources:
+                        print(f"\n[📚 NGUỒN CĂN CỨ]: {', '.join(sources)}")
+                    else:
+                        print(f"\n[ℹ️ PHẠM VI DỮ LIỆU]: Câu hỏi nằm ngoài cơ sở dữ liệu nội bộ.")
+
+            # 2. Tổng hợp giọng nói TTS
+            tts_synth_latency = 0.0
+            tts_playback_duration = 0.0
             
-            # Phát âm thanh ra loa nếu play_audio=True
-            if play_audio and synth_res["audio_path"] and synth_res["audio_path"].exists():
-                print(f"[🔊 BẮT ĐẦU PHÁT RA LOA] (Sau {response_time}s chuẩn bị)...")
-                t_play = time.time()
-                self.tts.play(synth_res["audio_path"], block=True)
-                tts_playback_duration = round(time.time() - t_play, 2)
-        else:
-            response_time = round(time.time() - start_time, 2)
+            if speak and self.tts_enabled and answer:
+                print(f"\n[🗣️ ĐANG TỔNG HỢP GIỌNG ĐỌC] ({self.tts.voice})...")
+                synth_res = self.tts.synthesize(answer)
+                tts_synth_latency = synth_res["latency_sec"]
+                response_time = round(time.time() - start_time, 2)
+                
+                # Phát âm thanh ra loa nếu play_audio=True
+                if play_audio and synth_res["audio_path"] and synth_res["audio_path"].exists():
+                    print(f"[🔊 BẮT ĐẦU PHÁT RA LOA] (Sau {response_time}s chuẩn bị)...")
+                    t_play = time.time()
+                    self.tts.play(synth_res["audio_path"], block=True)
+                    tts_playback_duration = round(time.time() - t_play, 2)
+            else:
+                response_time = round(time.time() - start_time, 2)
 
-        total_wall_time = round(time.time() - start_time, 2)
-        
-        return {
-            "question": question,
-            "answer": answer,
-            "sources": sources,
-            "found_in_docs": found_in_docs,
-            "latency": {
-                "rag_sec": rag_latency,
-                "tts_sec": tts_synth_latency,
-                "tts_synth_sec": tts_synth_latency,
-                "response_sec": response_time,
-                "playback_sec": tts_playback_duration,
-                "total_sec": total_wall_time
+            total_wall_time = round(time.time() - start_time, 2)
+            
+            return {
+                "question": question,
+                "answer": answer,
+                "sources": sources,
+                "found_in_docs": found_in_docs,
+                "source_type": source_type,
+                "warning_issued": warning_issued,
+                "is_visual": is_visual,
+                "latency": {
+                    "rag_sec": rag_latency,
+                    "vision_sec": rag_latency if is_visual else 0.0,
+                    "tts_sec": tts_synth_latency,
+                    "tts_synth_sec": tts_synth_latency,
+                    "response_sec": response_time,
+                    "playback_sec": tts_playback_duration,
+                    "total_sec": total_wall_time
+                }
             }
-        }
+        finally:
+            self._is_busy = False
 
     def process_audio(self, audio_data: np.ndarray, speak: bool = True) -> Optional[Dict[str, Any]]:
         """
@@ -247,6 +382,7 @@ class VoiceAgentPipeline:
             self.tts.speak(welcome_phrase, block=True)
 
         session_count = 0
+        self.pause_proactive_greeting()
         try:
             while True:
                 session_count += 1
@@ -270,13 +406,13 @@ class VoiceAgentPipeline:
                     print("\n[+] Đã nhận lệnh kết thúc từ Quý công dân. Phiên làm việc hoàn tất.")
                     break
 
-        except KeyboardInterrupt:
-            print("\n\n[!] Nhận tín hiệu dừng từ bàn phím (Ctrl+C). Đang đóng phiên làm việc...")
+        except (KeyboardInterrupt, EOFError):
+            print("\n\n[!] Nhận tín hiệu dừng (Ctrl+C). Đang đóng phiên làm việc...")
             farewell = "Tạm biệt Quý công dân. Chúc Quý công dân một ngày tốt lành!"
             if self.tts_enabled:
                 self.tts.speak(farewell, block=True)
         finally:
-            self.tts.stop()
+            self.resume_proactive_greeting()
 
     def run_interactive_text(self):
         """
@@ -286,11 +422,12 @@ class VoiceAgentPipeline:
         print("\n" + "=" * 70)
         print(" BẮT ĐẦU CHẾ ĐỘ NHẬP VĂN BẢN (TEXT MODE) ")
         print("  • Gõ câu hỏi của bạn và nhấn [Enter]")
-        print("  • Gõ 'q', 'exit' hoặc 'tạm biệt' để thoát")
+        print("  • Gõ 'q', 'exit' hoặc 'tạm biệt' để thoát về Menu chính")
         print("=" * 70)
 
-        while True:
-            try:
+        self.pause_proactive_greeting()
+        try:
+            while True:
                 question = input("\n[👤 CÔNG DÂN HỎI]: ").strip()
                 if not question:
                     continue
@@ -303,11 +440,34 @@ class VoiceAgentPipeline:
                     break
 
                 res = self.process_text(question, speak=self.tts_enabled)
-                print(f"⏱️  Thời gian chuẩn bị: {res['latency']['response_sec']}s (RAG: {res['latency']['rag_sec']}s | TTS: {res['latency']['tts_synth_sec']}s)")
+                print(f"⏱️  Thời gian chuẩn bị: {res['latency']['response_sec']}s (RAG/Vision: {res['latency']['rag_sec']}s | TTS: {res['latency']['tts_synth_sec']}s)")
 
-            except KeyboardInterrupt:
-                print("\n[!] Đã dừng chế độ văn bản.")
-                break
+        except (KeyboardInterrupt, EOFError):
+            print("\n[!] Đã dừng chế độ văn bản và quay về Menu chính.")
+        finally:
+            self.resume_proactive_greeting()
+
+    def cleanup(self):
+        """Giải phóng toàn bộ tài nguyên phần cứng (Camera, Audio, Thread) an toàn và không lặp lại."""
+        if getattr(self, "_is_cleaned_up", False):
+            return
+        self._is_cleaned_up = True
+        print("[🛑 CLEANUP] Đang giải phóng tài nguyên Pipeline...")
+        if self.vision_mgr:
+            try:
+                self.vision_mgr.stop_monitoring()
+            except Exception:
+                pass
+        if self.camera:
+            try:
+                self.camera.stop()
+            except Exception:
+                pass
+        if self.tts:
+            try:
+                self.tts.stop()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

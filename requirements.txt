@@ -28,3 +28,8 @@ pygame>=2.5.0
 
 # Optional Web search & utilities
 requests>=2.31.0
+
+# Computer Vision & Object Detection (Stage 5)
+opencv-python>=4.8.0
+ultralytics>=8.2.0
+google-genai>=0.1.0

@@ -1,6 +1,10 @@
 import os
 import sys
+import warnings
 from pathlib import Path
+
+# Bỏ qua cảnh báo lấy mẫu cố định vô hại từ thư viện langchain_google_genai
+warnings.filterwarnings("ignore", category=UserWarning, module="langchain_google_genai")
 
 # Đảm bảo in tiếng Việt UTF-8 chuẩn trên Windows
 if sys.stdout.encoding != 'utf-8':
@@ -60,6 +64,23 @@ WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "float16")
 TTS_VOICE = os.getenv("TTS_VOICE", "vi-VN-HoaiMyNeural")
 TTS_RATE = os.getenv("TTS_RATE", "+0%")
 TTS_PITCH = os.getenv("TTS_PITCH", "+0Hz")
+
+# Web Search Fallback Settings (Tavily Search API)
+ENABLE_WEB_SEARCH_FALLBACK = os.getenv("ENABLE_WEB_SEARCH_FALLBACK", "true").lower() in ("true", "1", "yes")
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+
+# Vision Settings (Computer Vision & YOLOv8)
+VISION_ENABLED = os.getenv("VISION_ENABLED", "true").lower() in ("true", "1", "yes")
+CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
+CAMERA_WIDTH = int(os.getenv("CAMERA_WIDTH", "640"))
+CAMERA_HEIGHT = int(os.getenv("CAMERA_HEIGHT", "480"))
+YOLO_MODEL_PATH = os.getenv("YOLO_MODEL_PATH", str(Path(__file__).resolve().parent.parent.parent / "yolov8n.pt"))
+YOLO_DEVICE = os.getenv("YOLO_DEVICE", "0")  # "0" for CUDA GPU, "cpu" for CPU
+YOLO_IMGSZ = int(os.getenv("YOLO_IMGSZ", "320"))
+PERSON_CONFIDENCE_THRESHOLD = float(os.getenv("PERSON_CONFIDENCE_THRESHOLD", "0.5"))
+PROACTIVE_GREETING_ENABLED = os.getenv("PROACTIVE_GREETING_ENABLED", "true").lower() in ("true", "1", "yes")
+PROACTIVE_GREETING_RATIO = float(os.getenv("PROACTIVE_GREETING_RATIO", "0.20"))  # bbox area / frame area
+PROACTIVE_COOLDOWN_SEC = float(os.getenv("PROACTIVE_COOLDOWN_SEC", "20.0"))
 
 
 def get_embedding_model():

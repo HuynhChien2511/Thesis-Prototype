@@ -8,6 +8,7 @@ import os
 import sys
 import time
 import asyncio
+import threading
 from pathlib import Path
 from typing import Union, Dict, Any, Optional
 
@@ -47,6 +48,8 @@ class TextToSpeech:
         self.voice = voice
         self.rate = rate
         self.pitch = pitch
+        self._synth_lock = threading.Lock()
+        self._play_lock = threading.Lock()
         self._init_mixer()
 
     def _init_mixer(self):
@@ -85,7 +88,7 @@ class TextToSpeech:
         """
         Tổng hợp giọng nói từ văn bản:
         1. Chuẩn hóa text (tẩy markdown, đọc từ viết tắt)
-        2. Sinh file âm thanh mp3 qua edge-tts
+        2. Sinh file âm thanh mp3 qua edge-tts (Thread-safe)
         3. Đo độ trễ (latency)
         """
         start_time = time.time()
@@ -99,20 +102,31 @@ class TextToSpeech:
                 "latency_sec": 0.0
             }
 
-        # 2. Đường dẫn file đầu ra
-        target_path = Path(output_path) if output_path else DEFAULT_TTS_AUDIO
-        target_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._synth_lock:
+            # 2. Đường dẫn file đầu ra (dùng timestamp tránh va chạm giữa các luồng)
+            if output_path:
+                target_path = Path(output_path)
+            else:
+                target_path = DATA_DIR / f"tts_{int(time.time()*1000)}.mp3"
+            target_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # 3. Chạy tổng hợp giọng nói (bọc try-except chống sập do mất mạng)
-        try:
-            asyncio.run(self._async_synthesize(cleaned_text, target_path))
-        except Exception as e:
-            print(f"[!] Lỗi kết nối tổng hợp giọng nói Edge-TTS: {e}")
-            return {
-                "audio_path": None,
-                "cleaned_text": cleaned_text,
-                "latency_sec": round(time.time() - start_time, 2)
-            }
+            # 3. Chạy tổng hợp giọng nói (bọc try-except chống sập do mất mạng)
+            try:
+                asyncio.run(self._async_synthesize(cleaned_text, target_path))
+                # Tạo bản copy vào file mặc định để tương thích các script cũ
+                if target_path != DEFAULT_TTS_AUDIO and target_path.exists():
+                    try:
+                        import shutil
+                        shutil.copyfile(target_path, DEFAULT_TTS_AUDIO)
+                    except Exception:
+                        pass
+            except Exception as e:
+                print(f"[!] Lỗi kết nối tổng hợp giọng nói Edge-TTS: {e}")
+                return {
+                    "audio_path": None,
+                    "cleaned_text": cleaned_text,
+                    "latency_sec": round(time.time() - start_time, 2)
+                }
 
         latency_sec = round(time.time() - start_time, 2)
         return {
@@ -123,24 +137,28 @@ class TextToSpeech:
 
     def play(self, audio_path: Union[str, Path], block: bool = True):
         """
-        Phát file âm thanh ra loa ngoài:
+        Phát file âm thanh ra loa ngoài (Thread-safe):
         - block=True: Đợi phát xong hết câu mới trả quyền điều khiển
         - block=False: Phát nền không chặn luồng
         """
-        self._init_mixer()
-        audio_file = str(audio_path)
-        
-        try:
-            pygame.mixer.music.load(audio_file)
-            pygame.mixer.music.play()
+        with self._play_lock:
+            self._init_mixer()
+            audio_file = str(audio_path)
+            if not Path(audio_file).exists():
+                print(f"[!] Không tìm thấy file âm thanh để phát: {audio_file}")
+                return
             
-            if block:
-                while pygame.mixer.music.get_busy():
-                    pygame.time.Clock().tick(20)
-                # Giải phóng khóa file trên Windows để các lần gọi sau không bị PermissionError
-                pygame.mixer.music.unload()
-        except Exception as e:
-            print(f"[!] Lỗi khi phát âm thanh {audio_file}: {e}")
+            try:
+                pygame.mixer.music.load(audio_file)
+                pygame.mixer.music.play()
+                
+                if block:
+                    while pygame.mixer.music.get_busy():
+                        pygame.time.Clock().tick(20)
+                    # Giải phóng khóa file trên Windows để các lần gọi sau không bị PermissionError
+                    pygame.mixer.music.unload()
+            except Exception as e:
+                print(f"[!] Lỗi khi phát âm thanh {audio_file}: {e}")
 
     def stop(self):
         """Dừng phát âm thanh ngay lập tức và giải phóng file."""

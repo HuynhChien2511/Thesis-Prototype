@@ -30,6 +30,7 @@ from src.config import (
     WHISPER_DEVICE,
     TTS_VOICE,
     SIMILARITY_THRESHOLD,
+    VISION_ENABLED,
     DATA_DIR,
     VECTOR_DB_DIR
 )
@@ -44,6 +45,7 @@ BANNER = """
   🧠 Mô hình LLM          : {llm_provider} ({gemini_model})
   🎧 Nhận diện tiếng nói  : Faster-Whisper ({whisper_model}) trên [{whisper_device}]
   🗣️  Tổng hợp giọng nói   : Edge-TTS ({tts_voice})
+  👁️  Mắt thần thị giác   : YOLOv8n (HRI Proactive Greeting & Multimodal VQA)
   📚 Cơ sở dữ liệu RAG    : ChromaDB ({vector_dir})
   🛡️  Ngưỡng chống ảo giác: {threshold} (Nghiêm ngặt trích dẫn Điều/Khoản)
 ================================================================================
@@ -95,31 +97,42 @@ def main():
         action="store_true",
         help="Tắt âm thanh phát ra loa (chỉ in câu trả lời dạng văn bản)"
     )
+    parser.add_argument(
+        "--no-vision",
+        action="store_true",
+        help="Tắt module camera thị giác"
+    )
     args = parser.parse_args()
 
     print(BANNER)
     
     # Khởi tạo Pipeline tích hợp toàn trình
     tts_enabled = not args.no_tts
-    pipeline = VoiceAgentPipeline(record_mode="ptt", tts_enabled=tts_enabled)
+    vision_enabled = not args.no_vision
+    pipeline = VoiceAgentPipeline(record_mode="ptt", tts_enabled=tts_enabled, vision_enabled=vision_enabled)
 
-    # Nếu người dùng truyền tham số trực tiếp qua dòng lệnh
-    if args.mode:
-        if args.mode == "ptt":
-            pipeline.run_interactive_voice(mode="ptt")
-        elif args.mode == "vad":
-            pipeline.run_interactive_voice(mode="vad")
-        elif args.mode == "text":
-            pipeline.run_interactive_text()
-        elif args.mode == "auto":
-            run_automated_demo(pipeline)
-        return
+    try:
+        # Nếu người dùng truyền tham số trực tiếp qua dòng lệnh
+        if args.mode:
+            if args.mode == "ptt":
+                pipeline.run_interactive_voice(mode="ptt")
+            elif args.mode == "vad":
+                pipeline.run_interactive_voice(mode="vad")
+            elif args.mode == "text":
+                pipeline.run_interactive_text()
+            elif args.mode == "auto":
+                run_automated_demo(pipeline)
+            return
 
-    # Nếu không có tham số, hiển thị Menu tương tác thân thiện
-    while True:
-        print_menu()
-        try:
-            choice = input("👉 Nhập lựa chọn của bạn (1-5): ").strip()
+        # Nếu không có tham số, hiển thị Menu tương tác thân thiện
+        while True:
+            print_menu()
+            try:
+                choice = input("👉 Nhập lựa chọn của bạn (1-5): ").strip()
+            except (KeyboardInterrupt, EOFError):
+                print("\n[+] Đã nhận tín hiệu dừng từ người dùng.")
+                break
+
             if choice == "1":
                 pipeline.run_interactive_voice(mode="ptt")
             elif choice == "2":
@@ -133,9 +146,11 @@ def main():
                 break
             else:
                 print("[!] Lựa chọn không hợp lệ. Vui lòng nhập từ 1 đến 5.")
-        except KeyboardInterrupt:
-            print("\n[!] Đã đóng ứng dụng.")
-            break
+
+    except (KeyboardInterrupt, EOFError):
+        print("\n[+] Đóng ứng dụng an toàn.")
+    finally:
+        pipeline.cleanup()
 
 
 if __name__ == "__main__":

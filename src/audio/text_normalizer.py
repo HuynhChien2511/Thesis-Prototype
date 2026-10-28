@@ -51,6 +51,17 @@ def clean_markdown_for_speech(text: str) -> str:
     if not text:
         return ""
 
+    # Chuyển đổi hộp cảnh báo tìm kiếm internet thành lời đọc tự nhiên cho loa ngoài (A2 confirmed)
+    text = re.sub(
+        r"⚠️\s*CẢNH BÁO TRA CỨU INTERNET:[\s\S]*?(?=Quý công dân|\n\n|$)",
+        "Lưu ý: Thông tin sau được tôi tra cứu từ internet, chưa có trong quy định nội bộ của cơ quan. ",
+        text,
+        flags=re.IGNORECASE
+    )
+    # Xóa khối danh sách nguồn URL ở cuối văn bản để loa không đọc URL thô
+    text = re.sub(r"📚\s*NGUỒN TRA CỨU[\s\S]*$", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"https?://\S+", "", text)
+
     # Xóa các đường phân cách ngang (---, ===, ***)
     text = re.sub(r"^\s*[=\-_*]{3,}\s*$", ". ", text, flags=re.MULTILINE)
 
